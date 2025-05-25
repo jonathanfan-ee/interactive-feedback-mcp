@@ -22,32 +22,58 @@ def launch_feedback_ui(summary: str, predefinedOptions: list[str] | None = None)
         output_file = tmp.name
 
     try:
-        # Get the path to feedback_ui.py relative to this script
+        # Get the path to the feedback script relative to this script
         script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Try GUI version first, fall back to CLI version
         feedback_ui_path = os.path.join(script_dir, "feedback_ui.py")
+        feedback_cli_path = os.path.join(script_dir, "feedback_cli.py")
+        
+        # Check if we have a display (GUI environment)
+        has_display = os.environ.get('DISPLAY') is not None
+        
+        # Choose the appropriate script
+        if has_display and os.path.exists(feedback_ui_path):
+            script_path = feedback_ui_path
+            use_cli = False
+        else:
+            script_path = feedback_cli_path
+            use_cli = True
 
-        # Run feedback_ui.py as a separate process
-        # NOTE: There appears to be a bug in uv, so we need
-        # to pass a bunch of special flags to make this work
+        # Run the feedback script as a separate process
         args = [
             sys.executable,
             "-u",
-            feedback_ui_path,
+            script_path,
             "--prompt", summary,
             "--output-file", output_file,
             "--predefined-options", "|||".join(predefinedOptions) if predefinedOptions else ""
         ]
-        result = subprocess.run(
-            args,
-            check=False,
-            shell=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            close_fds=True
-        )
+        
+        if use_cli:
+            # For CLI version, we need to allow interaction
+            result = subprocess.run(
+                args,
+                check=False,
+                shell=False,
+                stdin=None,  # Allow stdin for user input
+                stdout=None,  # Allow stdout for user interaction
+                stderr=None   # Allow stderr for error messages
+            )
+        else:
+            # For GUI version, suppress output as before
+            result = subprocess.run(
+                args,
+                check=False,
+                shell=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                close_fds=True
+            )
+            
         if result.returncode != 0:
-            raise Exception(f"Failed to launch feedback UI: {result.returncode}")
+            raise Exception(f"Failed to launch feedback interface: {result.returncode}")
 
         # Read the result from the temporary file
         with open(output_file, 'r') as f:

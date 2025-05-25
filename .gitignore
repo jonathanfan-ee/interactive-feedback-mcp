@@ -18,3 +18,4 @@ venv*/
 uv.lock
 
 .cursor/rules/
+.specstory/
