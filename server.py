@@ -7,14 +7,13 @@ import sys
 import json
 import tempfile
 import subprocess
-
-from typing import Annotated, Dict
+from typing import Dict, List, Optional
 
 from fastmcp import FastMCP
 from pydantic import Field
 
-# The log_level is necessary for Cline to work: https://github.com/jlowin/fastmcp/issues/81
-mcp = FastMCP("Interactive Feedback MCP", log_level="ERROR")
+# Initialize FastMCP server
+mcp = FastMCP("Interactive Feedback MCP")
 
 def launch_feedback_ui(summary: str, predefinedOptions: list[str] | None = None) -> dict[str, str]:
     # Create a temporary file for the feedback result
@@ -24,66 +23,78 @@ def launch_feedback_ui(summary: str, predefinedOptions: list[str] | None = None)
     try:
         # Get the path to the feedback script relative to this script
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        # Try GUI version first, fall back to CLI version
+        feedback_web_path = os.path.join(script_dir, "feedback_web.py")
         feedback_ui_path = os.path.join(script_dir, "feedback_ui.py")
-        feedback_cli_path = os.path.join(script_dir, "feedback_cli.py")
         
-        # Check if we have a display (GUI environment)
+        # Check environment preference and availability
+        ui_preference = os.environ.get('INTERACTIVE_FEEDBACK_UI', 'auto').lower()
         has_display = os.environ.get('DISPLAY') is not None
         
-        # Choose the appropriate script
-        if has_display and os.path.exists(feedback_ui_path):
-            script_path = feedback_ui_path
-            use_cli = False
-        else:
-            script_path = feedback_cli_path
-            use_cli = True
-
-        # Run the feedback script as a separate process
-        args = [
-            sys.executable,
-            "-u",
-            script_path,
-            "--prompt", summary,
-            "--output-file", output_file,
-            "--predefined-options", "|||".join(predefinedOptions) if predefinedOptions else ""
-        ]
+        # Check if PySide6 is available for GUI
+        has_pyside6 = False
+        try:
+            import PySide6
+            has_pyside6 = True
+        except ImportError:
+            pass
         
-        if use_cli:
-            # For CLI version, we need to allow interaction
-            result = subprocess.run(
-                args,
-                check=False,
-                shell=False,
-                stdin=None,  # Allow stdin for user input
-                stdout=None,  # Allow stdout for user interaction
-                stderr=None   # Allow stderr for error messages
-            )
-        else:
-            # For GUI version, suppress output as before
-            result = subprocess.run(
-                args,
-                check=False,
-                shell=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                close_fds=True
-            )
-            
+        # Determine which interface to use
+        script_path = None
+        interface_type = "unknown"
+        
+        if ui_preference == 'web' and os.path.exists(feedback_web_path):
+            script_path = feedback_web_path
+            interface_type = "web"
+        elif ui_preference == 'gui' and has_display and has_pyside6 and os.path.exists(feedback_ui_path):
+            script_path = feedback_ui_path
+            interface_type = "gui"
+        elif ui_preference == 'auto':
+            # Auto-select based on environment
+            if os.path.exists(feedback_web_path):
+                script_path = feedback_web_path
+                interface_type = "web"
+            elif has_display and has_pyside6 and os.path.exists(feedback_ui_path):
+                script_path = feedback_ui_path
+                interface_type = "gui"
+        
+        if not script_path:
+            return {"interactive_feedback": "Error: No suitable feedback interface found"}
+        
+        # Prepare command arguments
+        cmd = [sys.executable, script_path, "--prompt", summary, "--output-file", output_file]
+        
+        if predefinedOptions:
+            options_str = "|||".join(predefinedOptions)
+            cmd.extend(["--predefined-options", options_str])
+        
+        print(f"🚀 Launching {interface_type} feedback interface...", flush=True)
+        
+        # Run the feedback script
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
         if result.returncode != 0:
-            raise Exception(f"Failed to launch feedback interface: {result.returncode}")
-
-        # Read the result from the temporary file
-        with open(output_file, 'r') as f:
-            result = json.load(f)
-        os.unlink(output_file)
-        return result
-    except Exception as e:
+            print(f"❌ Feedback script failed: {result.stderr}", flush=True)
+            return {"interactive_feedback": "Error: Feedback collection failed"}
+        
+        # Read the result
         if os.path.exists(output_file):
-            os.unlink(output_file)
-        raise e
+            with open(output_file, 'r', encoding='utf-8') as f:
+                feedback_result = json.load(f)
+            return feedback_result
+        else:
+            return {"interactive_feedback": "Error: No feedback file generated"}
+    
+    except Exception as e:
+        print(f"❌ Error in launch_feedback_ui: {e}", flush=True)
+        return {"interactive_feedback": f"Error: {str(e)}"}
+    
+    finally:
+        # Clean up temporary file
+        if os.path.exists(output_file):
+            try:
+                os.unlink(output_file)
+            except:
+                pass
 
 @mcp.tool()
 def interactive_feedback(
@@ -95,4 +106,5 @@ def interactive_feedback(
     return launch_feedback_ui(message, predefined_options_list)
 
 if __name__ == "__main__":
+    # Run with stdio transport
     mcp.run(transport="stdio")
