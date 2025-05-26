@@ -19,3 +19,6 @@ uv.lock
 
 .cursor/rules/
 .specstory/
+# SpecStory explanation file
+.specstory/.what-is-this.md
+.cursorindexingignore
